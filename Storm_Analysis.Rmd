@@ -1,0 +1,306 @@
+---
+title: "Weather events most harmful to population and economic health"
+author: "Shane Keane"
+date: "31/07/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+This analysis answers two questions: which severe weather events are most harmful on average to population health in the US; and which severe weather events lead to the most average economic damage in the US. This analysis relies on the NOAA Storm Database. To answer the first question, the average number of total deaths and fatalities caused by events is considered. To answer the second question, on the other hand, the average amount of total property and crop damage is considered. The data has not been recorded very consistently, and so it will first be necessary to relabel many events to approximately categorize them into the 48 types of events referred to in the NWSI 10-1605 document. This process will result in some data being discarded, but the vast majority of data is kept and it is assumed that it is representative. Inflation does not appear to be taken into account when considering economic factors, but as severe events are expected to occur with roughly consistent relative frequency over time, it is assumed that the rankings would be about the same even if the data were scaled in line with inflation. 
+
+## Data Processing
+
+### Reading in data and preliminaries
+
+Firstly, the data is read in using fread, and then the columns 
+relevant to human health and economic damage are picked out. 
+
+```{r cache = TRUE}
+
+library(data.table)
+suppressPackageStartupMessages(library(R.utils)) # for using fread with bz2
+suppressPackageStartupMessages(library(dplyr))
+
+
+storm_data <- fread("repdata_data_StormData.csv.bz2") %>%
+  select(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+
+```
+
+We now make everything in the column containing strings upper case. 
+
+```{r cache = TRUE}
+
+storm_data$EVTYPE <- toupper(storm_data$EVTYPE)
+storm_data$PROPDMGEXP <- toupper(storm_data$PROPDMGEXP)
+storm_data$CROPDMGEXP <- toupper(storm_data$CROPDMGEXP)
+
+```
+
+### Categorizing all events into 48 event types in the NOAA report
+
+There are 985 event types in the data set, and these must be limited to carry out an effective analysis. I therefore firstly limit the data to event types occurring more than 5 times. (I've checked that this doesn't exclude any of the main event types listed in the report):
+
+```{r cache = TRUE}
+
+storm_data <- storm_data %>% group_by(EVTYPE) %>%
+                             mutate(freq = n()) %>%
+                             filter(freq > 5) %>%
+                             ungroup()
+
+```
+
+I then attempt to relabel incorrectly labelled events. Some data is excluded in this process. For example, "BLACK ICE" was excluded as I wasn't sure which category to place it into. Also, anything in the general area of heat/cold not specifically referred to as "heat/cold" or "excessive heat/cold" is excluded, because it is not possible to be sure which category it belongs to. The following changes were made based upon a visual investigation of the 985 different types of events recorded. 
+
+```{r cache = TRUE}
+
+storm_data$EVTYPE <- storm_data$EVTYPE %>%
+  gsub(".*AVAL.*", "AVALANCHE", .) %>%
+  gsub(".*BLIZZARD.*", "BLIZZARD", .) %>%
+  gsub(".*COASTAL FLOOD.*", "COASTAL FLOOD", .) %>%
+  gsub(".*LANDSLIDE.*", "DEBRIS FLOW", .) %>%
+  gsub("^FOG", "DENSE FOG", .) %>%
+  gsub(".*SMOKE.*", "DENSE SMOKE", .) %>%
+  gsub(".*DROUGHT.*", "DROUGHT", .) %>%
+  gsub(".*DUST DEV.*", "DUST DEVIL", .) %>%
+  gsub(".*DUST STORM.*", "DUST STORM", .) %>%
+  gsub(".*EXCESSIVE HEAT.*", "EXCESSIVE HEAT", .) %>%
+  gsub("^COLD.*", "COLD/WIND CHILL", .) %>%
+  gsub("^WIND CHILL.*", "COLD/WIND CHILL", .) %>%
+  gsub("^EXTREME COLD.*", "EXTREME COLD/WIND CHILL", .) %>%
+  gsub("^EXTREME WIND.*CHILL.*", "EXTREME COLD/WIND CHILL", .) %>%
+  gsub("^FLASH FLOOD.*", "FLASH FLOOD", .) %>%
+  gsub("^FROST.*", "FROST/FREEZE", .) %>%
+  gsub("^FREEZE.*", "FROST/FREEZE", .) %>%
+  gsub(".*FUNNEL CLOUD.*", "FUNNEL CLOUD", .) %>%
+  gsub("^HAIL.*", "HAIL", .) %>%
+  gsub("^RAIN$", "HEAVY RAIN", .) %>%
+  gsub("^HEAVY RAINS$", "HEAVY RAIN", .) %>%
+  gsub(".*HEAVY SNOW.*", "HEAVY SNOW", .) %>%
+  gsub("^SNOW.*", "HEAVY SNOW", .) %>%
+  gsub(".*HIGH SURF.*", "HIGH SURF", .) %>%
+  gsub("^HIGH WIND.*", "HIGH WIND", .) %>%
+  gsub(".*HURRICANE.*", "HURRICANE", .) %>%
+  gsub(".*TYPHOON.*", "HURRICANE", .) %>%
+  gsub(".*ICE STORM.*", "ICE STORM", .) %>%
+  gsub(".*EFFECT SNOW.*", "LAKE-EFFECT SNOW", .) %>%
+  gsub("^LIGHTNING.*", "LIGHTNING", .) %>%
+  gsub(".*MARINE TSTM WIND.*", "MARINE THUNDERSTORM WIND", .) %>%
+  gsub("RIP CURRENTS", "RIP CURRENT", .) %>%
+  gsub(".*RIVER FLOOD.*", "FLOOD", .) %>%
+  gsub("^SLEET.*", "SLEET", .) %>%
+  gsub("^STORM SURGE.*", "STORM SURGE/TIDE", .) %>%
+  gsub("^TIDAL.*", "STORM SURGE/TIDE", .) %>%
+  gsub("^STRONG WIND.*", "STRONG WIND", .) %>%
+  gsub("^THUNDERSTORM.*", "THUNDERSTORM WIND", .) %>%
+  gsub("^TSTM.*", "THUNDERSTORM WIND", .) %>%
+  gsub("^TORN.*", "TORNADO", .) %>%
+  gsub("^TROPICAL STORM.*", "TROPICAL STORM", .) %>%
+  gsub("^WATER.*", "WATERSPOUT", .) %>%
+  gsub("^VOLCANIC.*", "VOLCANIC ASH", .) %>%
+  gsub("^WILD.*", "WILDFIRE", .) %>%
+  gsub(".*WINTER STORM.*", "WINTER STORM", .) %>%
+  gsub("^WINTER WEATHER.*", "WINTER WEATHER", .) %>%
+  gsub("^WINT.*MIX.*", "WINTER WEATHER", .) %>%
+  gsub("ASTRONOMICAL HIGH TIDE", "STORM SURGE/TIDE", .) %>%
+  gsub(".*MICROBURST.*", "THUNDERSTORM WIND", .) %>%
+  gsub(".*EXCESSIVE SNOW.*", "HEAVY SNOW", .) %>%
+  gsub("^WIND.*", "HIGH WIND", .) %>%
+  gsub("^URBAN.*", "FLOOD", .) %>%
+  gsub(".*BLOWING SNOW.*", "HEAVY SNOW", .) %>%
+  gsub("^GUSTY WIND.*", "HIGH WIND", .) %>%
+  gsub(".*HEAVY SURF.*", "HIGH SURF", .) %>%
+  gsub(".*PRECIP.*", "HEAVY RAIN", .) %>%
+  gsub("^SEVERE THUNDERSTORM.*", "THUNDERSTORM WIND", .) %>%
+  gsub(".*HEAVY LAKE SNOW.*", "LAKE-EFFECT SNOW", .)
+
+```
+
+There remain various event types which I can't firmly categorize in any one area, so I now specifically pull out the event types as listed in the Storm Data Documentation, and print out the number of events for each. 
+
+```{r cache = TRUE}
+
+storm_data <- storm_data %>% filter(EVTYPE %in% c("ASTRONOMICAL LOW TIDE",
+                                               "AVALANCHE",
+                                               "BLIZZARD",
+                                               "COASTAL FLOOD",
+                                               "COLD/WIND CHILL",
+                                               "DEBRIS FLOW",
+                                               "DENSE FOG",
+                                               "DENSE SMOKE",
+                                               "DROUGHT",
+                                               "DUST DEVIL",
+                                               "DUST STORM",
+                                               "EXCESSIVE HEAT",
+                                               "EXTREME COLD/WIND CHILL",
+                                               "FLASH FLOOD",
+                                               "FLOOD",
+                                               "FROST/FREEZE",
+                                               "FUNNEL CLOUD",
+                                               "FREEZING FOG",
+                                               "HAIL",
+                                               "HEAT",
+                                               "HEAVY RAIN",
+                                               "HEAVY SNOW",
+                                               "HIGH SURF",
+                                               "HIGH WIND",
+                                               "HURRICANE",
+                                               "ICE STORM",
+                                               "LAKE-EFFECT SNOW",
+                                               "LAKESHORE FLOOD",
+                                               "LIGHTNING",
+                                               "MARINE HAIL",
+                                               "MARINE HIGH WIND",
+                                               "MARINE STRONG WIND",
+                                               "MARINE THUNDERSTORM WIND",
+                                               "RIP CURRENT",
+                                               "SEICHE",
+                                               "SLEET",
+                                               "STORM SURGE/TIDE",
+                                               "STRONG WIND",
+                                               "THUNDERSTORM WIND",
+                                               "TORNADO",
+                                               "TROPICAL DEPRESSION",
+                                               "TROPICAL STORM",
+                                               "TSUNAMI",
+                                               "VOLCANIC ASH",
+                                               "WATERSPOUT", 
+                                               "WILDFIRE",
+                                               "WINTER STORM",
+                                               "WINTER WEATHER"))
+
+
+print(table(storm_data$EVTYPE))
+
+```
+
+Note that there are 898,569 data entries remaining out of 902,297 in the raw data set, which is 99.59% of the original data. 
+
+### Modifying dollar values based on magnitude columns
+
+I will now scale the property damage and economic damage values by the magnitude, which is recorded in the columns ending "EXP". 
+
+Firstly, we note the following values are all included in the PROPDMGEXP and CROPDMGEXP columns:
+
+```{r cache = TRUE}
+
+print(table(storm_data$PROPDMGEXP))
+
+print(table(storm_data$CROPDMGEXP))
+
+```
+
+The documentation only refers to "K" for thousands, "M" for millions and "B" for billions. I am also going to assume that the absence of any characters, or the use of "0", means that there is no multiplicative factor. All other values are indeterminate and I therefore exclude these when considering economic damage. I will generate another data frame holding data to be used for the economic analysis. 
+
+```{r cache = TRUE}
+print(dim(storm_data))
+storm_data_econ <- storm_data %>% filter(PROPDMGEXP %in% c("", "0", "K", "M", "B") &
+                                         CROPDMGEXP %in% c("", "0", "K", "M", "B"))
+
+```
+
+Note that even after the above exclusion, 898467 entries remain, which is 99.58% of the original number. 
+
+I have decided to list the property damage value in millions of dollars, so I replace "" and "0" with 0.000001, "K" with 0.001, "M" with 1 and "B" with 1000, and then multiply the relevant columns. 
+
+```{r cache = TRUE}
+storm_data_econ$PROPDMGEXP <- storm_data_econ$PROPDMGEXP %>% 
+  gsub("^$", "0.000001", .) %>%
+  gsub("^0$", "0.000001", .) %>%
+  gsub("K", "0.001", .) %>%
+  gsub("M", "1.0", .) %>%
+  gsub("B", "1000.0", .)
+
+storm_data_econ$CROPDMGEXP <- storm_data_econ$CROPDMGEXP %>% 
+  gsub("^$", "0.000001", .) %>%
+  gsub("^0$", "0.000001", .) %>%
+  gsub("K", "0.001", .) %>%
+  gsub("M", "1.0", .) %>%
+  gsub("B", "1000.0", .)
+
+#convert to numeric
+storm_data_econ$CROPDMGEXP <- as.numeric(as.character(storm_data_econ$CROPDMGEXP))
+storm_data_econ$PROPDMGEXP <- as.numeric(as.character(storm_data_econ$PROPDMGEXP))
+
+#scale PROPDMG and CROPDMG values
+storm_data_econ <- storm_data_econ %>% 
+  mutate(PROPDMG = PROPDMG*PROPDMGEXP, CROPDMG = CROPDMG*CROPDMGEXP)
+```
+
+### Calculating mean of relevant variables in preparation for plotting
+
+We wish to know which of the 48 events is most harmful to population and economic health. There are two possible approaches: determining which is most harmful per event (i.e. mean harm), or which is most harmful in total (i.e. the sum of all harm). I will address the question of which events are most harmful PER EVENT, which i think is more interesting information. I therefore calculate the mean of fatalities, injuries, property damage value and crop damage value for each event.
+
+```{r cache = TRUE}
+
+options(dplyr.summarise.inform=F) #suppress summarize output
+
+casualties <- storm_data %>% 
+  group_by(EVTYPE) %>% 
+  summarize(MEAN_INJURIES = mean(INJURIES), MEAN_FATALITIES = mean(FATALITIES))
+
+damage_econ <- storm_data_econ %>% 
+  group_by(EVTYPE) %>% 
+  summarize(MEAN_PROPDMG = mean(PROPDMG), MEAN_CROPDMG = mean(CROPDMG))
+
+```
+
+## Results
+
+### Effects on population health
+
+Now we plot the total mean casualties for each type of event. We use melt to tidy the casualties data set, enabling number of injuries and fatalities to be stacked in ggplot:
+
+```{r cache = TRUE}
+
+casualties <- reshape2::melt(casualties, "EVTYPE", c("MEAN_FATALITIES", "MEAN_INJURIES"))
+
+```
+
+And then we plot this:
+
+```{r cache = TRUE}
+
+library(ggplot2)
+
+ggplot(casualties, aes(x = reorder(EVTYPE, value), y = value, fill = variable)) + 
+  geom_bar(position="stack", stat="identity") + 
+  coord_flip() + 
+  theme(axis.text = element_text(size = 6), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  scale_fill_discrete(name = "", labels = c("Mean fatalities", "Mean injuries")) + 
+  labs(caption = "Fig. 1: Mean fatalities and injuries per weather event type. Tsunamis lead to the highest average\nnumber of injuries and fatalities, and are thus most harmful with respect to population health.     \nHurricanes and excessive heat also lead to high numbers of injuries and fatalities.\t\t        ")
+
+```
+
+### Effects on economic health
+
+Now we plot the total mean cost of property/crop damage for each type of event. We use melt to tidy the damage_econ data set, enabling the values for both types of damage to be stacked in ggplot:
+
+```{r cache = TRUE}
+
+damage_econ <- reshape2::melt(damage_econ, "EVTYPE", c("MEAN_PROPDMG", "MEAN_CROPDMG"))
+
+```
+
+And then we plot this:
+
+```{r cache = TRUE}
+
+library(ggplot2)
+
+ggplot(damage_econ, aes(x = reorder(EVTYPE, value), y = value, fill = variable)) + 
+  geom_bar(position="stack", stat="identity") + 
+  coord_flip() + 
+  theme(axis.text = element_text(size = 6), axis.title.y = element_blank()) + 
+  scale_fill_discrete(name = "", labels = c("Property damage", "Crop damage")) + 
+  ylab("Millions of Dollars") +
+  labs(caption = "Fig. 2: Mean damage costs per weather event type. Hurricanes cause the greatest average\namount of economic damage, with storm surges being a distant second.\t\t\t\t ")
+
+```
